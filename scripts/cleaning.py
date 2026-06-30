@@ -24,6 +24,7 @@ networks = spark.read.csv(f"{HDFS_PATH}/networks.csv", header=True, inferSchema=
 network_types = spark.read.csv(f"{HDFS_PATH}/network_types.csv", header=True, inferSchema=True)
 status = spark.read.csv(f"{HDFS_PATH}/status.csv", header=True, inferSchema=True)
 types = spark.read.csv(f"{HDFS_PATH}/types.csv", header=True, inferSchema=True)
+air_dates = spark.read.csv(f"{HDFS_PATH}/air_dates.csv", header=True, inferSchema=True)
 
 #on corrige les types 
 shows = shows.withColumn("show_id", col("show_id").cast("integer"))
@@ -42,6 +43,13 @@ print(f"Après déduplication : {shows.count()} lignes")
 
 #On supprime les lignes avec des valeurs nulles dans les colonnes critiques
 shows = shows.dropna(subset=["show_id", "name", "popularity"])
+# On garde uniquement la date de première diffusion
+first_air_dates = air_dates.filter(col("is_first") == 1) \
+    .select("show_id", "date") \
+    .withColumnRenamed("date", "first_air_date")
+
+# On déduplique au cas où il y aurait plusieurs lignes is_first=1 par série
+first_air_dates = first_air_dates.dropDuplicates(["show_id"])
 
 #Jointures
 # shows + votes
@@ -61,6 +69,7 @@ df = df.join(status, on="status_id", how="left")
 # shows + types
 df = df.join(types, on="type_id", how="left")
 
+df = df.join(first_air_dates, on="show_id", how="left")
 #On garde uniquement les colonnes nécessaires
 df_final = df.select(
     col("show_id"),
@@ -74,7 +83,8 @@ df_final = df.select(
     col("genre_name"),
     col("network_name"),
     col("status_name"),
-    col("type_name")
+    col("type_name"),
+    col("first_air_date")
 )
 df_final = df_final.withColumnRenamed("eposide_run_time", "episode_run_time")
 
@@ -93,7 +103,7 @@ df_final.select(
     "popularity", 
     "number_of_seasons", 
     "number_of_episodes",
-    "eposide_run_time",
+    "episode_run_time",
     "vote_average", 
     "vote_count"
 ).describe().show()
