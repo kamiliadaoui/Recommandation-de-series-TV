@@ -2,13 +2,11 @@ import os
 os.environ["JAVA_HOME"] = r"C:\Users\kamil\AppData\Local\Programs\ECLIPS~1\JDK-17~1.10-"
 
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, lit
+from pyspark.sql.functions import col, lit, when
 from pyspark.ml.feature import VectorAssembler, StandardScaler
 from pyspark.ml.clustering import KMeans
 from pyspark.ml.evaluation import ClusteringEvaluator
 
-
-# 1. DEMARRER SPARK
 
 spark = SparkSession.builder \
     .appName("TV Series - Clustering") \
@@ -18,7 +16,6 @@ spark = SparkSession.builder \
 
 spark.sparkContext.setLogLevel("ERROR")
 
-# 2. LIRE LES DONNEES NETTOYEES (parquet sauvegardé avant)
 
 HDFS_PATH = "hdfs://localhost:9000/user/kamil/data"
 
@@ -31,15 +28,10 @@ print(f"Nombre de lignes de départ : {df.count()}")
 shows_genres = df.groupBy(
     "show_id", "name", "popularity", "vote_average",
     "vote_count", "number_of_seasons",
-    "number_of_episodes", "episode_run_time"
+    "number_of_episodes", "episode_run_time", "decade", "adult"
 ).pivot("genre_name").agg(lit(1)).na.fill(0)
 
 print(f"Nombre de séries après agrégation : {shows_genres.count()}")
-print("\n=== APERCU APRES ONE-HOT ENCODING ===")
-shows_genres.show(5)
-
-print("\n=== COLONNES DISPONIBLES ===")
-print(shows_genres.columns)
 
 # 4. NETTOYAGE DES VALEURS ABERRANTES 
 
