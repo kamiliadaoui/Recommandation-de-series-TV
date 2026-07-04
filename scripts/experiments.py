@@ -77,9 +77,8 @@ evaluator = ClusteringEvaluator(
     predictionCol="prediction"
 )
 
-# ============================================================
+
 # EXPERIMENTATIONS — on teste plusieurs K et seeds
-# ============================================================
 experiments = []
 
 K_range = [3, 5, 8, 10, 12, 15]
@@ -120,9 +119,7 @@ for k in K_range:
             "max_cluster_size": max_size
         })
 
-# ============================================================
 # SAUVEGARDER LES RESULTATS DANS UN CSV
-# ============================================================
 output_file = r"C:\projet-hadoop\experiments\results.csv"
 os.makedirs(r"C:\projet-hadoop\experiments", exist_ok=True)
 
@@ -131,11 +128,10 @@ with open(output_file, "w", newline="", encoding="utf-8") as f:
     writer.writeheader()
     writer.writerows(experiments)
 
-print(f"\n✅ Résultats sauvegardés dans {output_file}")
+print(f"\n Résultats sauvegardés dans {output_file}")
 
-# ============================================================
 # RESUME — meilleur modèle
-# ============================================================
+
 best = max(experiments, key=lambda x: x["silhouette"])
 print(f"\n=== MEILLEUR MODELE ===")
 print(f"K={best['k']}, seed={best['seed']}")
