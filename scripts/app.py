@@ -11,18 +11,16 @@ from recommandation import (
     search_multifiltres
 )
 
-# ============================================================
+
 # CONFIGURATION
-# ============================================================
+
 st.set_page_config(
     page_title="TV Series Recommender",
     page_icon="🎬",
     layout="wide"
 )
 
-# ============================================================
 # SPARK
-# ============================================================
 @st.cache_resource
 def get_spark():
     return SparkSession.builder \
@@ -36,11 +34,10 @@ spark.sparkContext.setLogLevel("ERROR")
 
 HDFS_PATH = "hdfs://localhost:9000/user/kamil/data"
 
-# ============================================================
 # CHARGER LES DONNEES
-# ============================================================
 @st.cache_data
 def load_data():
+    # shows_clean — pour les filtres et infos d'affichage
     clean = spark.read.parquet(f"{HDFS_PATH}/shows_clean") \
         .groupBy("show_id", "name", "popularity", "vote_average",
                  "vote_count", "decade", "number_of_seasons",
@@ -55,14 +52,16 @@ def load_data():
     clean["vote_quality"] = clean["vote_average"] * (
         clean["vote_count"] / (clean["vote_count"] + 100)
     )
-    return clean
+
+    # shows_clustered — résultat du modèle KMeans
+    clustered = spark.read.parquet(f"{HDFS_PATH}/shows_clustered").toPandas()
+
+    return clean, clustered
 
 with st.spinner("⏳ Chargement des données depuis HDFS..."):
-    df_clean = load_data()
+    df_clean, df_clustered = load_data()
 
-# ============================================================
 # GENRES
-# ============================================================
 all_genres = set()
 for g in df_clean["genres"].dropna():
     for genre in g.split(", "):
@@ -70,9 +69,7 @@ for g in df_clean["genres"].dropna():
             all_genres.add(genre.strip())
 all_genres = sorted(list(all_genres))
 
-# ============================================================
 # CARTE SERIE
-# ============================================================
 def show_card(row):
     note = round(float(row.get("vote_average", 0)), 1)
     votes = int(row.get("vote_count", 0))
@@ -109,30 +106,24 @@ def show_card(row):
     </div>
     """, unsafe_allow_html=True)
 
-# ============================================================
 # TITRE
-# ============================================================
 st.title("🎬 TV Series Recommender")
 st.markdown("*Trouve ta prochaine série préférée*")
 st.divider()
 
-# ============================================================
 # ONGLETS
-# ============================================================
 tab1, tab2, tab3 = st.tabs([
     "🔍 Par série",
     "🎭 Par genre",
     "🎛️ Multi-filtres"
 ])
 
-# ============================================================
-# ONGLET 1 — PAR SERIE
-# ============================================================
+# ONGLET 1 — PAR SERIE (utilise le modèle KMeans)
 with tab1:
     st.header("Recommandation à partir d'une série")
     st.markdown("Choisis une série que tu as aimée et on te recommande des séries similaires.")
 
-    series_names = sorted(df_clean["name"].dropna().unique().tolist())
+    series_names = sorted(df_clustered["name"].dropna().unique().tolist())
     selected_series = st.selectbox("Choisis une série", series_names, key="tab1_series")
 
     if selected_series:
@@ -142,18 +133,16 @@ with tab1:
             show_card(serie_info.iloc[0])
             st.markdown("---")
 
-            recommendations = get_recommendations(df_clean, selected_series)
+        recommendations = get_recommendations(df_clean, df_clustered, selected_series)
 
-            st.subheader(f"Top 5 séries similaires à *{selected_series}*")
-            if recommendations.empty:
-                st.warning("Aucune recommandation trouvée.")
-            else:
-                for _, row in recommendations.iterrows():
-                    show_card(row)
+        st.subheader(f"Top 5 séries similaires à *{selected_series}*")
+        if recommendations.empty:
+            st.warning("Aucune recommandation trouvée.")
+        else:
+            for _, row in recommendations.iterrows():
+                show_card(row)
 
-# ============================================================
 # ONGLET 2 — PAR GENRE
-# ============================================================
 with tab2:
     st.header("Top séries par genre")
     st.markdown("Choisis un genre et découvre les meilleures séries.")
@@ -169,9 +158,7 @@ with tab2:
             for _, row in filtered.iterrows():
                 show_card(row)
 
-# ============================================================
 # ONGLET 3 — MULTI-FILTRES
-# ============================================================
 with tab3:
     st.header("Recherche personnalisée")
     st.markdown("Combine plusieurs critères pour trouver ta série idéale.")
