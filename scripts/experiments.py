@@ -18,6 +18,9 @@ spark = SparkSession.builder \
 spark.sparkContext.setLogLevel("ERROR")
 
 HDFS_PATH = "hdfs://localhost:9000/user/kamil/data"
+OUTPUT_DIR = r"C:\projet-hadoop\experiments"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
 df = spark.read.parquet(f"{HDFS_PATH}/shows_clean")
 
 # Même pipeline que clustering.py
@@ -77,16 +80,14 @@ evaluator = ClusteringEvaluator(
     predictionCol="prediction"
 )
 
-
-# EXPERIMENTATIONS — on teste plusieurs K et seeds
+# EXPERIMENTATIONS
 experiments = []
-
 K_range = [3, 5, 8, 10, 12, 15]
 seeds = [42, 123, 456]
 
 print("\n=== DEBUT DES EXPERIMENTATIONS ===")
-print(f"{'K':<5} {'Seed':<8} {'Coût':<15} {'Silhouette':<12} {'Nb séries/cluster (min/max)'}")
-print("-" * 70)
+print(f"{'K':<5} {'Seed':<8} {'Coût':<15} {'Silhouette':<12} {'Min':<8} {'Max'}")
+print("-" * 60)
 
 for k in K_range:
     for seed in seeds:
@@ -119,21 +120,19 @@ for k in K_range:
             "max_cluster_size": max_size
         })
 
-# SAUVEGARDER LES RESULTATS DANS UN CSV
-output_file = r"C:\projet-hadoop\experiments\results.csv"
-os.makedirs(r"C:\projet-hadoop\experiments", exist_ok=True)
-
-with open(output_file, "w", newline="", encoding="utf-8") as f:
+# SAUVEGARDE CSV
+output_csv = os.path.join(OUTPUT_DIR, "results.csv")
+with open(output_csv, "w", newline="", encoding="utf-8") as f:
     writer = csv.DictWriter(f, fieldnames=experiments[0].keys())
     writer.writeheader()
     writer.writerows(experiments)
 
-print(f"\n Résultats sauvegardés dans {output_file}")
+print(f"\n Résultats sauvegardés dans {output_csv}")
 
 # RESUME — meilleur modèle
 
 best = max(experiments, key=lambda x: x["silhouette"])
-print(f"\n=== MEILLEUR MODELE ===")
+print(f"\n=== MEILLEUR MODELE (selon silhouette) ===")
 print(f"K={best['k']}, seed={best['seed']}")
 print(f"Silhouette={best['silhouette']}, Coût={best['cout']}")
 
