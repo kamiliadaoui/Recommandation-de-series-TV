@@ -1,5 +1,5 @@
 import os
-os.environ["JAVA_HOME"] = r"C:\Users\kamil\AppData\Local\Programs\ECLIPS~1\JDK-17~1.10-"
+# os.environ["JAVA_HOME"] = r"C:\Users\User\AppData\Local\Programs\ECLIPS~1\JDK-17~1.10-"
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, lit, when
@@ -17,11 +17,12 @@ spark = SparkSession.builder \
 
 spark.sparkContext.setLogLevel("ERROR")
 
-HDFS_PATH = "hdfs://localhost:9000/user/kamil/data"
-OUTPUT_DIR = r"C:\projet-hadoop\experiments"
+HDFS_PATH = "hdfs://localhost:9000/user/user/data"
+OUTPUT_DIR = "experiments"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 df = spark.read.parquet(f"{HDFS_PATH}/shows_clean")
+df = df.filter(col("decade").isNotNull())
 
 # Même pipeline que clustering.py
 shows_genres = df.groupBy(

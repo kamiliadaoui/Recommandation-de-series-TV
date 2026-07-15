@@ -1,5 +1,5 @@
 import os
-os.environ["JAVA_HOME"] = r"C:\Users\kamil\AppData\Local\Programs\ECLIPS~1\JDK-17~1.10-"
+# os.environ["JAVA_HOME"] = r"C:\Users\User\AppData\Local\Programs\ECLIPS~1\JDK-17~1.10-"
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, when, count, isnull, year, floor
@@ -13,7 +13,7 @@ spark = SparkSession.builder \
 spark.sparkContext.setLogLevel("ERROR")
 
 # LIRE LES FICHIERS DEPUIS HDFS
-HDFS_PATH = "hdfs://localhost:9000/user/kamil/data"
+HDFS_PATH = "hdfs://localhost:9000/user/user/data"
 
 shows = spark.read.csv(f"{HDFS_PATH}/shows.csv", header=True, inferSchema=True,
     quote='"', escape='"', multiLine=True)

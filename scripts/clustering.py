@@ -1,11 +1,15 @@
 import os
-os.environ["JAVA_HOME"] = r"C:\Users\kamil\AppData\Local\Programs\ECLIPS~1\JDK-17~1.10-"
+import json
+from pathlib import Path
+# os.environ["JAVA_HOME"] = r"C:\Users\User\AppData\Local\Programs\ECLIPS~1\JDK-17~1.10-"
 
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, lit, when
 from pyspark.ml.feature import VectorAssembler, StandardScaler
 from pyspark.ml.clustering import KMeans
 from pyspark.ml.evaluation import ClusteringEvaluator
+from pathlib import Path
+
 
 # 1. DEMARRER SPARK
 spark = SparkSession.builder \
@@ -17,9 +21,10 @@ spark = SparkSession.builder \
 spark.sparkContext.setLogLevel("ERROR")
 
 # 2. LIRE LES DONNEES NETTOYEES
-HDFS_PATH = "hdfs://localhost:9000/user/kamil/data"
+HDFS_PATH = "hdfs://localhost:9000/user/user/data"
 df = spark.read.parquet(f"{HDFS_PATH}/shows_clean")
 print(f"Nombre de lignes de départ : {df.count()}")
+df = df.filter(col("decade").isNotNull())
 
 # 3. AGREGATION PAR SHOW_ID + ONE-HOT ENCODING DES GENRES
 shows_genres = df.groupBy(
@@ -72,6 +77,11 @@ excluded_cols = ["show_id", "name", "vote_average", "number_of_seasons",
 
 feature_cols = [c for c in shows_genres.columns if c not in excluded_cols]
 
+Path("outputs").mkdir(exist_ok=True)
+
+with open("outputs/feature_cols.json", "w", encoding="utf-8") as f:
+    json.dump(feature_cols, f, indent=4)
+
 print(f"\nFeatures utilisées : {feature_cols}")
 print(f"Nombre total de features : {len(feature_cols)}")
 
@@ -91,21 +101,45 @@ scaler = StandardScaler(
     withMean=True
 )
 scaler_model = scaler.fit(data_assembled)
+scaler_model.write().overwrite().save(
+    f"{HDFS_PATH}/models/scaler_model"
+)
 data_scaled = scaler_model.transform(data_assembled)
 data_scaled.cache()
 
 
 # 9. ENTRAINER LE MODELE KMEANS
-K_OPTIMAL = 12
+K_OPTIMAL = 8
 evaluator = ClusteringEvaluator(featuresCol="features", predictionCol="prediction")
 
 kmeans = KMeans(featuresCol="features", k=K_OPTIMAL, seed=42)
 model = kmeans.fit(data_scaled)
+model.write().overwrite().save(
+    f"{HDFS_PATH}/models/kmeans_model"
+)
 predictions = model.transform(data_scaled)
 predictions.cache()
 
 # 10. EVALUER LE MODELE
 silhouette = evaluator.evaluate(predictions)
+cluster_sizes = {
+    str(row["prediction"]): row["count"]
+    for row in predictions.groupBy("prediction").count().collect()
+}
+
+report = {
+    "k": K_OPTIMAL,
+    "seed": 42,
+    "silhouette": round(silhouette, 4),
+    "nb_series": predictions.count(),
+    "nb_features": len(feature_cols),
+    "cluster_sizes": cluster_sizes
+}
+
+Path("outputs").mkdir(exist_ok=True)
+
+with open("outputs/model_report.json", "w", encoding="utf-8") as f:
+    json.dump(report, f, indent=4)
 print(f"\n=== SCORE DE SILHOUETTE : {silhouette:.4f} ===")
 print("(plus proche de 1 = clusters bien séparés, proche de 0 = clusters qui se chevauchent)")
 
