@@ -1,59 +1,193 @@
-import os
-# os.environ["JAVA_HOME"] = r"C:\Users\User\AppData\Local\Programs\ECLIPS~1\JDK-17~1.10-"
-
-import streamlit as st
 import pandas as pd
+import streamlit as st
+
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import collect_set, first, concat_ws
+from pyspark.sql.functions import collect_set, concat_ws, first
 
 
-# CONFIGURATION
+# ============================================================
+# 1. CONFIGURATION
+# ============================================================
+
+HDFS_PATH = "hdfs://localhost:9000/user/user/data"
 
 st.set_page_config(
-    page_title="TV Series Recommender",
+    page_title="Recommandation de séries",
     page_icon="🎬",
     layout="wide"
 )
 
-# SPARK
+
+# ============================================================
+# 2. DÉMARRAGE DE SPARK
+# ============================================================
+
 @st.cache_resource
-def get_spark():
-    return SparkSession.builder \
-        .appName("TV Series - Streamlit") \
-        .master("local[*]") \
-        .config("spark.driver.memory", "4g") \
+def create_spark_session():
+
+    spark_session = (
+        SparkSession.builder
+        .appName("TV Series - Streamlit")
+        .master("local[*]")
+        .config("spark.driver.memory", "4g")
         .getOrCreate()
+    )
 
-spark = get_spark()
-spark.sparkContext.setLogLevel("ERROR")
+    spark_session.sparkContext.setLogLevel("ERROR")
 
-HDFS_PATH = "hdfs://localhost:9000/user/user/data"
+    return spark_session
 
-def get_recommendations(df_clean, df_clustered, selected_series, n=5):
-    serie_info = df_clustered[df_clustered["name"] == selected_series]
 
-    if serie_info.empty:
+spark = create_spark_session()
+
+
+# ============================================================
+# 3. CHARGEMENT DES DONNÉES
+# ============================================================
+
+@st.cache_data
+def load_data():
+
+    clean_path = f"{HDFS_PATH}/shows_clean"
+    clustered_path = f"{HDFS_PATH}/shows_clustered"
+
+    clean_spark = spark.read.parquet(
+        clean_path
+    )
+
+    # Une seule ligne par série
+    clean_spark = clean_spark.groupBy(
+        "show_id",
+        "name",
+        "popularity",
+        "vote_average",
+        "vote_count",
+        "decade",
+        "number_of_seasons",
+        "number_of_episodes",
+        "episode_run_time",
+        "status_name"
+    ).agg(
+        concat_ws(
+            ", ",
+            collect_set("genre_name")
+        ).alias("genres"),
+
+        first(
+            "network_name"
+        ).alias("network")
+    )
+
+    df_clean = clean_spark.toPandas()
+
+    # Remplacement des genres manquants
+    df_clean["genres"] = df_clean["genres"].replace(
+        "",
+        "Non renseigné"
+    )
+
+    df_clean["genres"] = df_clean["genres"].fillna(
+        "Non renseigné"
+    )
+
+    # Même formule que pendant l'entraînement
+    df_clean["vote_quality"] = (
+        df_clean["vote_average"]
+        * (
+            df_clean["vote_count"]
+            / (df_clean["vote_count"] + 100)
+        )
+    )
+
+    clustered_spark = spark.read.parquet(
+        clustered_path
+    )
+
+    df_clustered = clustered_spark.toPandas()
+
+    return df_clean, df_clustered
+
+
+with st.spinner("Chargement des données depuis HDFS..."):
+
+    df_clean, df_clustered = load_data()
+
+
+# ============================================================
+# 4. LISTE DES GENRES
+# ============================================================
+
+all_genres = set()
+
+for genres_text in df_clean["genres"]:
+
+    if pd.isna(genres_text):
+        continue
+
+    genres = genres_text.split(", ")
+
+    for genre in genres:
+
+        genre = genre.strip()
+
+        if genre == "":
+            continue
+
+        if genre == "Non renseigné":
+            continue
+
+        all_genres.add(genre)
+
+
+all_genres = sorted(
+    list(all_genres)
+)
+
+
+# ============================================================
+# 5. RECOMMANDATION PAR CLUSTER
+# ============================================================
+
+def get_recommendations(
+    clean_data,
+    clustered_data,
+    selected_series,
+    number_of_results=5
+):
+
+    selected_rows = clustered_data[
+        clustered_data["name"] == selected_series
+    ]
+
+    if selected_rows.empty:
         return pd.DataFrame()
 
-    cluster_id = serie_info.iloc[0]["cluster_id"]
+    selected_cluster = selected_rows.iloc[0][
+        "cluster_id"
+    ]
 
-    same_cluster = df_clustered[
-        (df_clustered["cluster_id"] == cluster_id)
-        & (df_clustered["name"] != selected_series)
-        & (df_clustered["vote_count"] >= 10)
+    candidates = clustered_data[
+        clustered_data["cluster_id"] == selected_cluster
     ].copy()
 
-    clean_columns = [
+    candidates = candidates[
+        candidates["name"] != selected_series
+    ]
+
+    candidates = candidates[
+        candidates["vote_count"] >= 10
+    ]
+
+    display_columns = [
         "show_id",
         "genres",
         "network",
         "number_of_seasons",
-        "vote_average",
-        "decade"
+        "vote_average"
     ]
 
-    results = same_cluster.merge(
-        df_clean[clean_columns],
+    results = candidates.merge(
+        clean_data[display_columns],
         on="show_id",
         how="left"
     )
@@ -63,62 +197,109 @@ def get_recommendations(df_clean, df_clustered, selected_series, n=5):
         ascending=False
     )
 
-    results = results.drop_duplicates("name")
-
-    return results.head(n)
-
-
-def get_top_by_genre(df_clean, genre, n=5):
-    results = df_clean[
-        df_clean["genres"].str.contains(genre, na=False)
-        & (df_clean["vote_count"] >= 10)
-    ].copy()
-
-    results = results.sort_values(
-        "vote_quality",
-        ascending=False
+    results = results.drop_duplicates(
+        "name"
     )
 
-    results = results.drop_duplicates("name")
+    return results.head(
+        number_of_results
+    )
 
-    return results.head(n)
 
+# ============================================================
+# 6. CLASSEMENT PAR GENRE
+# ============================================================
 
-def search_multifiltres(
-    df_clean,
-    genre=None,
-    decade=None,
-    note_min=0,
-    votes_min=10,
-    length_range=None,
-    n=5
+def get_top_by_genre(
+    clean_data,
+    selected_genre,
+    number_of_results=5
 ):
-    results = df_clean[
-        df_clean["vote_count"] >= votes_min
+
+    contains_genre = clean_data[
+        "genres"
+    ].str.contains(
+        selected_genre,
+        na=False
+    )
+
+    enough_votes = (
+        clean_data["vote_count"] >= 10
+    )
+
+    results = clean_data[
+        contains_genre & enough_votes
     ].copy()
 
-    if genre and genre != "Tous":
+    results = results.sort_values(
+        "vote_quality",
+        ascending=False
+    )
+
+    results = results.drop_duplicates(
+        "name"
+    )
+
+    return results.head(
+        number_of_results
+    )
+
+
+# ============================================================
+# 7. RECHERCHE MULTI-CRITÈRES
+# ============================================================
+
+def search_with_filters(
+    clean_data,
+    selected_genre,
+    selected_decade,
+    minimum_rating,
+    minimum_votes,
+    season_range,
+    number_of_results=5
+):
+
+    results = clean_data[
+        clean_data["vote_count"] >= minimum_votes
+    ].copy()
+
+    if selected_genre != "Tous":
+
         results = results[
-            results["genres"].str.contains(genre, na=False)
+            results["genres"].str.contains(
+                selected_genre,
+                na=False
+            )
         ]
 
-    if decade and decade != "Toutes":
+    if selected_decade != "Toutes":
+
+        selected_decade = float(
+            selected_decade
+        )
+
         results = results[
-            results["decade"] == float(decade)
+            results["decade"] == selected_decade
         ]
 
-    if note_min:
-        results = results[
-            results["vote_average"] >= note_min
-        ]
+    results = results[
+        results["vote_average"] >= minimum_rating
+    ]
 
-    if length_range:
-        minimum = length_range[0]
-        maximum = length_range[1]
+    if season_range is not None:
+
+        minimum_seasons = season_range[0]
+        maximum_seasons = season_range[1]
 
         results = results[
-            (results["number_of_seasons"] >= minimum)
-            & (results["number_of_seasons"] <= maximum)
+            (
+                results["number_of_seasons"]
+                >= minimum_seasons
+            )
+            & (
+                results["number_of_seasons"]
+                <= maximum_seasons
+            )
         ]
 
     results = results.sort_values(
@@ -126,176 +307,322 @@ def search_multifiltres(
         ascending=False
     )
 
-    results = results.drop_duplicates("name")
-
-    return results.head(n)
-
-# CHARGER LES DONNEES
-@st.cache_data
-def load_data():
-    # shows_clean — pour les filtres et infos d'affichage
-    clean = spark.read.parquet(f"{HDFS_PATH}/shows_clean") \
-        .groupBy("show_id", "name", "popularity", "vote_average",
-                 "vote_count", "decade", "number_of_seasons",
-                 "number_of_episodes", "episode_run_time", "status_name") \
-        .agg(
-            concat_ws(", ", collect_set("genre_name")).alias("genres"),
-            first("network_name").alias("network")
-        ).toPandas()
-
-    clean["genres"] = clean["genres"].replace("", "Non renseigné")
-    clean["genres"] = clean["genres"].fillna("Non renseigné")
-    clean["vote_quality"] = clean["vote_average"] * (
-        clean["vote_count"] / (clean["vote_count"] + 100)
+    results = results.drop_duplicates(
+        "name"
     )
 
-    # shows_clustered — résultat du modèle KMeans
-    clustered = spark.read.parquet(f"{HDFS_PATH}/shows_clustered").toPandas()
+    return results.head(
+        number_of_results
+    )
 
-    return clean, clustered
 
-with st.spinner("⏳ Chargement des données depuis HDFS..."):
-    df_clean, df_clustered = load_data()
+# ============================================================
+# 8. AFFICHAGE D'UNE SÉRIE
+# ============================================================
 
-# GENRES
-all_genres = set()
-for g in df_clean["genres"].dropna():
-    for genre in g.split(", "):
-        if genre.strip() and genre.strip() != "Non renseigné":
-            all_genres.add(genre.strip())
-all_genres = sorted(list(all_genres))
+def display_series(series):
 
-# CARTE SERIE
-def show_card(row):
-    note = round(float(row.get("vote_average", 0)), 1)
-    votes = int(row.get("vote_count", 0))
-    decade = f"{int(row['decade'])}s" if pd.notna(row.get("decade")) else "N/A"
-    genres = row.get("genres", "Non renseigné")
-    network = row.get("network", "")
-    seasons = int(row["number_of_seasons"]) if pd.notna(row.get("number_of_seasons")) else "?"
+    name = series.get(
+        "name",
+        "Titre inconnu"
+    )
 
-    if str(network) == "nan" or not network or pd.isna(network):
+    rating = series.get(
+        "vote_average",
+        0
+    )
+
+    vote_count = series.get(
+        "vote_count",
+        0
+    )
+
+    decade = series.get(
+        "decade"
+    )
+
+    genres = series.get(
+        "genres",
+        "Non renseigné"
+    )
+
+    network = series.get(
+        "network",
+        "Chaîne inconnue"
+    )
+
+    seasons = series.get(
+        "number_of_seasons"
+    )
+
+    if pd.isna(rating):
+        rating = 0
+
+    if pd.isna(vote_count):
+        vote_count = 0
+
+    if pd.isna(decade):
+        decade_text = "Décennie inconnue"
+    else:
+        decade_text = str(
+            int(decade)
+        )
+
+    if pd.isna(network) or network == "":
         network = "Chaîne inconnue"
 
-    note_color = "#22c55e" if note >= 7 else "#f59e0b" if note >= 5 else "#ef4444"
+    if pd.isna(seasons):
+        seasons_text = "Nombre de saisons inconnu"
+    else:
+        seasons_text = (
+            str(int(seasons))
+            + " saison(s)"
+        )
 
-    st.markdown(f"""
-    <div style="
-        background: #1e1e2e;
-        border-radius: 12px;
-        padding: 16px 20px;
-        margin: 8px 0;
-        border-left: 4px solid #7c3aed;
-    ">
-        <h4 style="color: #e2e8f0; margin: 0 0 10px 0;">🎬 {row['name']}</h4>
-        <p style="color: #94a3b8; margin: 4px 0; font-size: 14px;">
-            ⭐ <b style="color:{note_color}">{note}/10</b>
-            <span style="color:#64748b; font-size:11px"> ({votes} votes)</span>
-            &nbsp;&nbsp;|&nbsp;&nbsp;
-            📅 <b style="color:#60a5fa">{decade}</b>
-            &nbsp;&nbsp;|&nbsp;&nbsp;
-            🎭 <b style="color:#34d399">{genres}</b>
-        </p>
-        <p style="color: #64748b; margin: 6px 0 0 0; font-size: 12px;">
-            📺 {network} &nbsp;&nbsp;|&nbsp;&nbsp; 🗂️ {seasons} saison(s)
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+    st.subheader(name)
 
-# TITRE
-st.title("🎬 TV Series Recommender")
-st.markdown("*Trouve ta prochaine série préférée*")
-st.divider()
+    st.write(
+        "Note :",
+        round(float(rating), 1),
+        "/ 10"
+    )
 
-# ONGLETS
-tab1, tab2, tab3 = st.tabs([
-    "🔍 Par série",
-    "🎭 Par genre",
-    "🎛️ Multi-filtres"
-])
+    st.write(
+        "Nombre de votes :",
+        int(vote_count)
+    )
 
-# ONGLET 1 — PAR SERIE (utilise le modèle KMeans)
-with tab1:
-    st.header("Recommandation à partir d'une série")
-    st.markdown("Choisis une série que tu as aimée et on te recommande des séries similaires.")
+    st.write(
+        "Décennie :",
+        decade_text
+    )
 
-    series_names = sorted(df_clustered["name"].dropna().unique().tolist())
-    selected_series = st.selectbox("Choisis une série", series_names, key="tab1_series")
+    st.write(
+        "Genres :",
+        genres
+    )
+
+    st.write(
+        "Chaîne :",
+        network
+    )
+
+    st.write(
+        "Longueur :",
+        seasons_text
+    )
+
+    st.divider()
+
+
+# ============================================================
+# 9. INTERFACE
+# ============================================================
+
+st.title("Recommandation de séries TV")
+
+st.write(
+    "Application utilisant les résultats "
+    "du modèle K-Means."
+)
+
+recommendation_tab, genre_tab, filters_tab = st.tabs(
+    [
+        "Par série",
+        "Par genre",
+        "Recherche avancée"
+    ]
+)
+
+
+# ============================================================
+# 10. ONGLET RECOMMANDATION
+# ============================================================
+
+with recommendation_tab:
+
+    st.header(
+        "Recommandation à partir d'une série"
+    )
+
+    series_names = (
+        df_clustered["name"]
+        .dropna()
+        .unique()
+        .tolist()
+    )
+
+    series_names = sorted(
+        series_names
+    )
+
+    selected_series = st.selectbox(
+        "Choisissez une série",
+        series_names
+    )
 
     if selected_series:
-        serie_info = df_clean[df_clean["name"] == selected_series]
-        if not serie_info.empty:
-            st.markdown("**Série sélectionnée :**")
-            show_card(serie_info.iloc[0])
-            st.markdown("---")
 
-        recommendations = get_recommendations(df_clean, df_clustered, selected_series)
+        selected_information = df_clean[
+            df_clean["name"] == selected_series
+        ]
 
-        st.subheader(f"Top 5 séries similaires à *{selected_series}*")
+        if not selected_information.empty:
+
+            st.write("Série sélectionnée :")
+
+            display_series(
+                selected_information.iloc[0]
+            )
+
+        recommendations = get_recommendations(
+            df_clean,
+            df_clustered,
+            selected_series
+        )
+
+        st.header(
+            "Séries du même cluster"
+        )
+
         if recommendations.empty:
-            st.warning("Aucune recommandation trouvée.")
+
+            st.warning(
+                "Aucune recommandation trouvée."
+            )
+
         else:
-            for _, row in recommendations.iterrows():
-                show_card(row)
 
-# ONGLET 2 — PAR GENRE
-with tab2:
-    st.header("Top séries par genre")
-    st.markdown("Choisis un genre et découvre les meilleures séries.")
+            for index, series in recommendations.iterrows():
 
-    selected_genre = st.selectbox("Choisis un genre", all_genres, key="tab2_genre")
+                display_series(
+                    series
+                )
+
+
+# ============================================================
+# 11. ONGLET GENRE
+# ============================================================
+
+with genre_tab:
+
+    st.header(
+        "Meilleures séries par genre"
+    )
+
+    selected_genre = st.selectbox(
+        "Choisissez un genre",
+        all_genres
+    )
 
     if selected_genre:
-        filtered = get_top_by_genre(df_clean, selected_genre)
-        st.subheader(f"Top 5 séries — {selected_genre}")
-        if filtered.empty:
-            st.warning("Aucune série trouvée pour ce genre.")
-        else:
-            for _, row in filtered.iterrows():
-                show_card(row)
 
-# ONGLET 3 — MULTI-FILTRES
-with tab3:
-    st.header("Recherche personnalisée")
-    st.markdown("Combine plusieurs critères pour trouver ta série idéale.")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        genre_filter = st.selectbox("Genre", ["Tous"] + all_genres, key="tab3_genre")
-        decade_options = sorted([int(d) for d in df_clean["decade"].dropna().unique()])
-        decade_filter = st.selectbox(
-            "Décennie", ["Toutes"] + [str(d) for d in decade_options], key="tab3_decade"
-        )
-
-    with col2:
-        note_min = st.slider("Note minimum", 0.0, 10.0, 6.0, 0.5, key="tab3_note")
-        length_options = {
-            "Toutes": None,
-            "Mini-série (1 saison)": (1, 1),
-            "Courte (2-3 saisons)": (2, 3),
-            "Moyenne (4-7 saisons)": (4, 7),
-            "Longue (8+ saisons)": (8, 999)
-        }
-        length_filter = st.selectbox(
-            "Longueur de série", list(length_options.keys()), key="tab3_length"
-        )
-
-    votes_min = st.slider("Nombre minimum de votes", 0, 500, 10, 10, key="tab3_votes")
-
-    if st.button("🔍 Rechercher", type="primary"):
-        results = search_multifiltres(
+        genre_results = get_top_by_genre(
             df_clean,
-            genre=genre_filter,
-            decade=decade_filter,
-            note_min=note_min,
-            votes_min=votes_min,
-            length_range=length_options[length_filter]
+            selected_genre
         )
 
-        st.subheader("Top 5 résultats")
-        if results.empty:
-            st.warning("Aucune série trouvée. Essaie d'élargir tes critères.")
+        if genre_results.empty:
+
+            st.warning(
+                "Aucune série trouvée."
+            )
+
         else:
-            for _, row in results.iterrows():
-                show_card(row)
+
+            for index, series in genre_results.iterrows():
+
+                display_series(
+                    series
+                )
+
+
+# ============================================================
+# 12. ONGLET RECHERCHE AVANCÉE
+# ============================================================
+
+with filters_tab:
+
+    st.header(
+        "Recherche avec plusieurs critères"
+    )
+
+    selected_genre_filter = st.selectbox(
+        "Genre",
+        ["Tous"] + all_genres
+    )
+
+    decade_values = (
+        df_clean["decade"]
+        .dropna()
+        .unique()
+        .tolist()
+    )
+
+    decade_values = [
+        str(int(decade))
+        for decade in decade_values
+    ]
+
+    decade_values = sorted(
+        decade_values
+    )
+
+    selected_decade = st.selectbox(
+        "Décennie",
+        ["Toutes"] + decade_values
+    )
+
+    minimum_rating = st.slider(
+        "Note minimum",
+        min_value=0.0,
+        max_value=10.0,
+        value=6.0,
+        step=0.5
+    )
+
+    minimum_votes = st.slider(
+        "Nombre minimum de votes",
+        min_value=0,
+        max_value=500,
+        value=10,
+        step=10
+    )
+
+    length_options = {
+        "Toutes": None,
+        "Une saison": (1, 1),
+        "Deux ou trois saisons": (2, 3),
+        "Quatre à sept saisons": (4, 7),
+        "Plus de sept saisons": (8, 999)
+    }
+
+    selected_length = st.selectbox(
+        "Longueur de la série",
+        list(length_options.keys())
+    )
+
+    if st.button("Rechercher"):
+
+        search_results = search_with_filters(
+            df_clean,
+            selected_genre_filter,
+            selected_decade,
+            minimum_rating,
+            minimum_votes,
+            length_options[selected_length]
+        )
+
+        if search_results.empty:
+
+            st.warning(
+                "Aucune série ne correspond aux critères."
+            )
+
+        else:
+
+            for index, series in search_results.iterrows():
+
+                display_series(
+                    series
+                )
