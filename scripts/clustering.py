@@ -69,13 +69,24 @@ shows_genres = shows_genres.withColumn(
     .otherwise(0)
 )
 
+# Popularité catégorielle — évite que la valeur brute écrase les genres
+# 1 = peu connu, 2 = modérément populaire, 3 = très populaire
+shows_genres = shows_genres.withColumn(
+    "popularity_cat",
+    when(col("popularity") >= 200, 3)
+    .when(col("popularity") >= 50, 2)
+    .otherwise(1)
+)
+
 shows_genres.cache()
 
 # 6. PREPARER LES FEATURES POUR KMEANS
+# Features : 20 genres + decade + popularity_cat + serie_length
+# ============================================================
 excluded_cols = ["show_id", "name", "vote_average", "number_of_seasons",
                  "number_of_episodes", "episode_run_time", "adult", "null",
                  "popularity", "vote_count", "vote_quality",
-                 "decade", "serie_length", "content_density"]
+                 "content_density"]
 
 feature_cols = [c for c in shows_genres.columns if c not in excluded_cols]
 
@@ -103,12 +114,12 @@ data_scaled.cache()
 
 
 # 9. ENTRAINER LE MODELE KMEANS
-# K=12 choisi suite aux expérimentations dans experiments.py
+# K=15 choisi suite aux expérimentations dans experiments.py
 # ============================================================
-K_OPTIMAL = 12
+K_OPTIMAL = 15
 evaluator = ClusteringEvaluator(featuresCol="features", predictionCol="prediction")
 
-kmeans = KMeans(featuresCol="features", k=K_OPTIMAL, seed=42)
+kmeans = KMeans(featuresCol="features", k=K_OPTIMAL, seed=456)
 model = kmeans.fit(data_scaled)
 predictions = model.transform(data_scaled)
 predictions.cache()
@@ -128,7 +139,8 @@ non_feature_cols = ["show_id", "name", "popularity", "vote_average",
                     "vote_count", "decade", "number_of_seasons",
                     "number_of_episodes", "episode_run_time", "adult",
                     "serie_length", "vote_quality", "content_density",
-                    "features_raw", "features", "prediction", "null"]
+                    "popularity_cat", "features_raw", "features",
+                    "prediction", "null"]
 
 # Récupérer les colonnes de genres automatiquement
 genre_cols_to_save = [c for c in predictions.columns
@@ -137,7 +149,7 @@ genre_cols_to_save = [c for c in predictions.columns
 # Sauvegarder avec les genres inclus
 result = predictions.select(
     ["show_id", "name", "popularity", "vote_quality",
-     "vote_count", "decade", "serie_length",
+     "vote_count", "decade", "serie_length", "popularity_cat",
      "content_density", "prediction"] + genre_cols_to_save
 ).withColumnRenamed("prediction", "cluster_id")
 

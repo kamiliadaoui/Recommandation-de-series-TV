@@ -4,7 +4,8 @@ os.environ["JAVA_HOME"] = r"C:\Users\kamil\AppData\Local\Programs\ECLIPS~1\JDK-1
 import streamlit as st
 import pandas as pd
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import collect_set, first, concat_ws
+from pyspark.sql.functions import collect_set, first, concat_ws, col
+
 from recommandation import (
     get_recommendations,
     get_top_by_genre,
@@ -37,8 +38,9 @@ HDFS_PATH = "hdfs://localhost:9000/user/kamil/data"
 # CHARGER LES DONNEES
 @st.cache_data
 def load_data():
-    # shows_clean — pour les filtres et infos d'affichage
     clean = spark.read.parquet(f"{HDFS_PATH}/shows_clean") \
+        .filter(col("adult") == 0) \
+        .filter(col("vote_count") > 0) \
         .groupBy("show_id", "name", "popularity", "vote_average",
                  "vote_count", "decade", "number_of_seasons",
                  "number_of_episodes", "episode_run_time", "status_name") \
@@ -53,7 +55,6 @@ def load_data():
         clean["vote_count"] / (clean["vote_count"] + 100)
     )
 
-    # shows_clustered — résultat du modèle KMeans
     clustered = spark.read.parquet(f"{HDFS_PATH}/shows_clustered").toPandas()
 
     return clean, clustered

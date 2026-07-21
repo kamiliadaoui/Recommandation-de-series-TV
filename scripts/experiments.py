@@ -55,7 +55,9 @@ shows_genres = shows_genres.withColumn(
 shows_genres.cache()
 
 excluded_cols = ["show_id", "name", "vote_average", "number_of_seasons",
-                 "number_of_episodes", "episode_run_time", "adult", "null"]
+                 "number_of_episodes", "episode_run_time", "adult", "null",
+                 "popularity", "vote_count", "vote_quality",
+                 "content_density"]
 feature_cols = [c for c in shows_genres.columns if c not in excluded_cols]
 
 assembler = VectorAssembler(
