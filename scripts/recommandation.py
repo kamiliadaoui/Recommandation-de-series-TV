@@ -1,22 +1,46 @@
 import pandas as pd
+import numpy as np
+from numpy.linalg import norm
+
+
+def cosine_distance(a, b):
+    """Calcule la distance cosinus entre deux vecteurs"""
+    if norm(a) == 0 or norm(b) == 0:
+        return 1.0
+    return 1 - np.dot(a, b) / (norm(a) * norm(b))
 
 
 def get_recommendations(df_clean, df_clustered, selected_series, n=5):
-    """Recommande n séries du même cluster KMeans"""
+    """Recommande n séries du même cluster triées par distance cosinus"""
     serie_info = df_clustered[df_clustered["name"] == selected_series]
     if serie_info.empty:
         return pd.DataFrame()
 
     cluster_id = serie_info.iloc[0]["cluster_id"]
 
-    # Séries du même cluster KMeans
+    # Features numériques + genres disponibles dans shows_clustered
+    excluded = ["show_id", "name", "cluster_id"]
+    feature_cols = [c for c in df_clustered.columns if c not in excluded]
+
+    # Vecteur de la série choisie
+    serie_vector = serie_info[feature_cols].fillna(0).values[0].astype(float)
+
+    # Séries du même cluster
     same_cluster = df_clustered[
         (df_clustered["cluster_id"] == cluster_id) &
         (df_clustered["name"] != selected_series) &
         (df_clustered["vote_count"] >= 10)
     ].copy()
 
-    # Joindre avec df_clean pour avoir genres, network, number_of_seasons
+    # Calcul de la distance cosinus
+    same_cluster["distance"] = same_cluster[feature_cols].fillna(0).apply(
+        lambda row: cosine_distance(
+            row.values.astype(float), serie_vector
+        ),
+        axis=1
+    )
+
+    # Joindre avec df_clean pour avoir genres, network, etc.
     results = same_cluster.merge(
         df_clean[["show_id", "genres", "network",
                   "number_of_seasons", "vote_average", "decade"]],
@@ -24,7 +48,8 @@ def get_recommendations(df_clean, df_clustered, selected_series, n=5):
         suffixes=("", "_clean")
     )
 
-    return results.sort_values("vote_quality", ascending=False) \
+    # Trier par distance cosinus (plus petit = plus similaire)
+    return results.sort_values("distance", ascending=True) \
                   .drop_duplicates("name") \
                   .head(n)
 
