@@ -51,10 +51,7 @@ first_air_dates = air_dates.filter(col("is_first") == 1) \
 
 first_air_dates = first_air_dates.dropDuplicates(["show_id"])
 
-# ============================================================
 # JOINTURES
-# ============================================================
-
 # shows + votes
 df = shows.join(show_votes, on="show_id", how="left")
 
@@ -105,7 +102,7 @@ df_final = df_final.withColumn(
 # Filtrer les décennies aberrantes 
 df_final = df_final.filter(
     col("decade").isNull() |
-    ((col("decade") >= 1900) & (col("decade") <= 2030))
+    ((col("decade") >= 1900) & (col("decade") <= 2020))
 )
 
 # STATS DESCRIPTIVES
