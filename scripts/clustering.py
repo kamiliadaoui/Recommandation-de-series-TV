@@ -7,9 +7,9 @@ from pyspark.ml.feature import VectorAssembler, StandardScaler
 from pyspark.ml.clustering import KMeans
 from pyspark.ml.evaluation import ClusteringEvaluator
 
-# ============================================================
+
 # 1. DEMARRER SPARK
-# ============================================================
+
 spark = SparkSession.builder \
     .appName("TV Series - Clustering") \
     .master("local[*]") \
@@ -18,14 +18,14 @@ spark = SparkSession.builder \
 
 spark.sparkContext.setLogLevel("ERROR")
 
-# ============================================================
+
 # 2. LIRE LES DONNEES NETTOYEES
-# ============================================================
+
 HDFS_PATH = "hdfs://localhost:9000/user/kamil/data"
 df = spark.read.parquet(f"{HDFS_PATH}/shows_clean")
 print(f"Nombre de lignes de départ : {df.count()}")
 
-# ============================================================
+
 # 3. AGREGATION PAR SHOW_ID + ONE-HOT ENCODING DES GENRES
 shows_genres = df.groupBy(
     "show_id", "name", "popularity", "vote_average",
@@ -82,7 +82,7 @@ shows_genres.cache()
 
 # 6. PREPARER LES FEATURES POUR KMEANS
 # Features : 20 genres + decade + popularity_cat + serie_length
-# ============================================================
+
 excluded_cols = ["show_id", "name", "vote_average", "number_of_seasons",
                  "number_of_episodes", "episode_run_time", "adult", "null",
                  "popularity", "vote_count", "vote_quality",
@@ -115,7 +115,7 @@ data_scaled.cache()
 
 # 9. ENTRAINER LE MODELE KMEANS
 # K=15 choisi suite aux expérimentations dans experiments.py
-# ============================================================
+
 K_OPTIMAL = 15
 evaluator = ClusteringEvaluator(featuresCol="features", predictionCol="prediction")
 
@@ -132,9 +132,9 @@ print("(plus proche de 1 = clusters bien séparés, proche de 0 = clusters qui s
 print("\n=== TAILLE DE CHAQUE CLUSTER ===")
 predictions.groupBy("prediction").count().orderBy("prediction").show()
 
-# ============================================================
+
 # 11. SAUVEGARDER SUR HDFS (avec les genres inclus)
-# ============================================================
+
 non_feature_cols = ["show_id", "name", "popularity", "vote_average",
                     "vote_count", "decade", "number_of_seasons",
                     "number_of_episodes", "episode_run_time", "adult",
