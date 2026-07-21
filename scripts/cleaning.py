@@ -15,8 +15,7 @@ spark.sparkContext.setLogLevel("ERROR")
 # LIRE LES FICHIERS DEPUIS HDFS
 HDFS_PATH = "hdfs://localhost:9000/user/kamil/data"
 
-shows = spark.read.csv(f"{HDFS_PATH}/shows.csv", header=True, inferSchema=True,
-    quote='"', escape='"', multiLine=True)
+shows = spark.read.csv(f"{HDFS_PATH}/shows.csv", header=True, inferSchema=True, multiLine=True)
 show_votes = spark.read.csv(f"{HDFS_PATH}/show_votes.csv", header=True, inferSchema=True)
 genres = spark.read.csv(f"{HDFS_PATH}/genres.csv", header=True, inferSchema=True)
 genre_types = spark.read.csv(f"{HDFS_PATH}/genre_types.csv", header=True, inferSchema=True)

@@ -10,6 +10,8 @@
 |hdfs dfs -cat /dossier/fichier.csv|Afficher le contenu d'un fichier HDFS|
 |hdfs dfs -rm /dossier/fichier.csv|Supprimer un fichier sur HDFS|
 |hdfs dfs -du -h /dossier/|Voir la taille des fichiers|
+ lancer l'app : 
+ C:\Users\kamil\AppData\Local\Python\pythoncore-3.14-64\python.exe -m streamlit run C:\projet-hadoop\scripts\app.py
 
 
 

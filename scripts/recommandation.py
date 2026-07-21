@@ -4,14 +4,14 @@ from numpy.linalg import norm
 
 
 def cosine_distance(a, b):
-    """Calcule la distance cosinus entre deux vecteurs"""
+    #Calcule la distance cosinus entre deux vecteurs
     if norm(a) == 0 or norm(b) == 0:
         return 1.0
     return 1 - np.dot(a, b) / (norm(a) * norm(b))
 
 
 def get_recommendations(df_clean, df_clustered, selected_series, n=5):
-    """Recommande n séries du même cluster triées par distance cosinus"""
+    #Recommande n séries du même cluster triées par distance cosinus
     serie_info = df_clustered[df_clustered["name"] == selected_series]
     if serie_info.empty:
         return pd.DataFrame()
@@ -55,7 +55,7 @@ def get_recommendations(df_clean, df_clustered, selected_series, n=5):
 
 
 def get_top_by_genre(df_clean, genre, n=5):
-    """Top 5 séries d'un genre donné"""
+    #Top 5 séries d'un genre donné
     return df_clean[
         df_clean["genres"].str.contains(genre, na=False) &
         (df_clean["vote_count"] >= 10)
@@ -67,7 +67,7 @@ def get_top_by_genre(df_clean, genre, n=5):
 def search_multifiltres(df_clean, genre=None, decade=None,
                         note_min=0, votes_min=10,
                         length_range=None, n=5):
-    """Recherche multi-critères combinés"""
+    #Recherche multi-critères combinés
     results = df_clean[df_clean["vote_count"] >= votes_min].copy()
 
     if genre and genre != "Tous":
