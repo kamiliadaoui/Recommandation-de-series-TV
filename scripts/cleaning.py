@@ -105,7 +105,7 @@ df_final = df_final.withColumn(
 # Filtrer les décennies aberrantes 
 df_final = df_final.filter(
     col("decade").isNull() |
-    ((col("decade") >= 1900) & (col("decade") <= 2030))
+    ((col("decade") >= 1900) & (col("decade") <= 2020))
 )
 
 # STATS DESCRIPTIVES
